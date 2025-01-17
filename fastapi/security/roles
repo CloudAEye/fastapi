@@ -1,0 +1,84 @@
+from typing import List, Optional, Dict, Any
+from typing_extensions import Annotated
+from functools import wraps
+from fastapi import Depends, HTTPException, Request
+from fastapi.security import OAuth2PasswordBearer
+from starlette.status import HTTP_403_FORBIDDEN
+import jwt
+
+class RoleBasedAuth:
+    """
+    Role-based authorization system for FastAPI routes.
+    Provides decorators and utilities for role-based access control.
+    """
+    
+    def __init__(self):
+        self.role_cache: Dict[str, List[str]] = {}
+  
+    def requires_role(self, allowed_roles: List[str]):
+        """
+        Decorator to protect routes based on user roles.
+        Usage: @role_auth.requires_role(['admin', 'manager'])
+        """
+        def decorator(func):
+            @wraps(func)
+            async def wrapper(*args, **kwargs):
+                request = kwargs.get('request')
+                if not request:
+                    for arg in args:
+                        if isinstance(arg, Request):
+                            request = arg
+                            break
+                
+                if not request:
+                    raise HTTPException(status_code=500, detail="Request object not found")
+                
+                user_role = request.state.user.get('role', '').lower()
+                
+            
+                if 'Authorization' in request.headers:
+                    token = request.headers['Authorization'].split(' ')[1]
+                    cached_roles = self.role_cache.get(token, [])
+                    
+                    if cached_roles:
+                   
+                        if any(role.lower() in cached_roles for role in allowed_roles):
+                            return await func(*args, **kwargs)
+                    
+                    try:
+                    
+                        payload = jwt.decode(token, options={"verify_signature": False})
+                        
+                        # Cache the roles for future requests
+                        self.role_cache[token] = payload.get('roles', [])
+                        
+                       
+                        if any(role.lower() in [r.lower() for r in payload.get('roles', [])]
+                              for role in allowed_roles):
+                            return await func(*args, **kwargs)
+                            
+                    except Exception:
+                        pass
+                
+                raise HTTPException(
+                    status_code=HTTP_403_FORBIDDEN,
+                    detail="Insufficient permissions"
+                )
+                
+            return wrapper
+        return decorator
+    
+    def has_permission(self, user_role: str, required_roles: List[str]) -> bool:
+        """
+        Utility method to check if a user role has required permissions
+        """
+        
+        return user_role.lower() in [role.lower() for role in required_roles]
+    
+    def clear_cache(self, token: str):
+        """
+        Clear cached roles for a specific token
+        """
+        self.role_cache.pop(token, None)
+
+role_auth = RoleBasedAuth()
